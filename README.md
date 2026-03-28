@@ -3,6 +3,7 @@
 A standalone editor for Houdini `.hcs` theme files with live preview panels.
 
 AI-assisted project. The code and project structure were reviewed, edited, and curated by the author.
+
 本项目在开发过程中使用了 AI 辅助，代码与项目结构已由作者审阅、整理和确认。
 
 This repository is prepared to be safe for GitHub publication:
