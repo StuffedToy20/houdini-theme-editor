@@ -2,6 +2,8 @@
 
 A standalone editor for Houdini `.hcs` theme files with live preview panels.
 
+Houdini is a trademark of SideFX. This project is independent and is not affiliated with SideFX.
+
 ![Houdini Theme Editor screenshot](assets/editor-screenshot.png)
 
 AI-assisted project. The code and project structure were reviewed, edited, and curated by the author.
