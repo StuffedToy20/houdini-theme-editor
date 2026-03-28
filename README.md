@@ -43,10 +43,19 @@ The editor's default fallback palette is initialized from the author's `QingKong
 ## What Is Included
 
 - `hcs_theme_editor.py`
+- `theme_editor/`
 - `launch_hcs_theme_editor.cmd`
 - this `README.md`
 - `LICENSE`
 - `.gitignore`
+
+## Project Structure
+
+- `hcs_theme_editor.py`: lightweight entry point
+- `theme_editor/core.py`: `.hcs` parsing, color helpers, filesystem logic
+- `theme_editor/bindings.py`: editable Houdini color bindings and section metadata
+- `theme_editor/previews.py`: menu, parameter, slider, channel, and node-graph preview drawing
+- `theme_editor/app.py`: Tk UI shell, editing workflow, save and deploy actions
 
 ## What Is Not Included
 
@@ -145,10 +154,19 @@ Then `Deploy to Config` copies the current theme file there.
 ## 仓库包含
 
 - `hcs_theme_editor.py`
+- `theme_editor/`
 - `launch_hcs_theme_editor.cmd`
 - 当前这个 `README.md`
 - `LICENSE`
 - `.gitignore`
+
+## 项目结构
+
+- `hcs_theme_editor.py`：轻量入口文件
+- `theme_editor/core.py`：`.hcs` 解析、颜色工具和文件系统逻辑
+- `theme_editor/bindings.py`：可编辑的 Houdini 颜色绑定与分组元数据
+- `theme_editor/previews.py`：菜单、参数、slider、channel、node graph 的预览绘制
+- `theme_editor/app.py`：Tk 界面主体、编辑流程、保存与部署动作
 
 ## 仓库不包含
 
