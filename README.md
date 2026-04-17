@@ -1,6 +1,6 @@
 # Houdini Theme Editor
 
-A standalone editor for Houdini `.hcs` theme files with live preview panels.
+A standalone editor for Houdini `.hcs` theme files and `3DSceneColors` viewport/grid configs with live preview panels.
 
 Houdini is a trademark of SideFX. This project is independent and is not affiliated with SideFX.
 
@@ -29,7 +29,8 @@ The editor's default fallback palette is initialized from the author's `QingKong
 
 ## Features
 
-- Edit common Houdini theme colors as hex values
+- Edit common Houdini UI theme colors as hex values
+- Edit Scene View / viewport grid colors from `3DSceneColors`
 - Visual pickers for each editable item
 - Preview panels for:
   - parameter states
@@ -38,17 +39,21 @@ The editor's default fallback palette is initialized from the author's `QingKong
   - sliders and keyframes
   - channel editor
   - node graph
+  - scene view / viewport grid
 - Auto-detect Houdini `config` folders
 - Deploy the current theme directly to the detected `config` folder
 - Generate a channel-family palette from one base color
 - Save As automatically syncs the internal `Scheme:` name to the file name
 - Start from a fresh overlay theme without needing a bundled base file
+- Switch cleanly between `.hcs` UI theme editing and `3DSceneColors` viewport editing
+- Includes both Windows `.cmd` and Linux `.sh` launchers
 
 ## What Is Included
 
 - `hcs_theme_editor.py`
 - `theme_editor/`
 - `launch_hcs_theme_editor.cmd`
+- `launch_hcs_theme_editor.sh`
 - this `README.md`
 - `LICENSE`
 - `.gitignore`
@@ -56,9 +61,9 @@ The editor's default fallback palette is initialized from the author's `QingKong
 ## Project Structure
 
 - `hcs_theme_editor.py`: lightweight entry point
-- `theme_editor/core.py`: `.hcs` parsing, color helpers, filesystem logic
+- `theme_editor/core.py`: `.hcs` and `3DSceneColors` parsing, color helpers, filesystem logic
 - `theme_editor/bindings.py`: editable Houdini color bindings and section metadata
-- `theme_editor/previews.py`: menu, parameter, slider, channel, and node-graph preview drawing
+- `theme_editor/previews.py`: menu, parameter, slider, channel, node-graph, and scene-view preview drawing
 - `theme_editor/app.py`: Tk UI shell, editing workflow, save and deploy actions
 
 ## What Is Not Included
@@ -74,11 +79,17 @@ Windows:
 1. Double-click `launch_hcs_theme_editor.cmd`
 2. Or run `python hcs_theme_editor.py`
 
-The launcher tries these in order:
+Linux:
+
+1. `chmod +x launch_hcs_theme_editor.sh`
+2. `./launch_hcs_theme_editor.sh`
+3. Or run `python3 hcs_theme_editor.py`
+
+The launchers try these in order:
 
 1. `HCS_THEME_EDITOR_PYTHON` environment variable
-2. `.venv\Scripts\python.exe`
-3. `py -3`
+2. local virtualenv Python
+3. `py -3` on Windows
 4. `python`
 5. `python3`
 
@@ -86,10 +97,10 @@ The app uses only Python standard-library modules.
 
 ## Workflow
 
-Open an existing theme:
+Open an existing config:
 
 1. Click `Browse`
-2. Select a local `.hcs` file
+2. Select a local `.hcs` or `3DSceneColors` file
 3. Edit colors
 4. `Save`, `Save As`, or `Deploy to Config`
 
@@ -107,7 +118,7 @@ The editor tries to detect user config folders like:
 - `%USERPROFILE%\Documents\houdini21.0\config`
 - `%HOUDINI_USER_PREF_DIR%\config`
 
-Then `Deploy to Config` copies the current theme file there.
+Then `Deploy to Config` copies the current config file there.
 
 ## Notes
 

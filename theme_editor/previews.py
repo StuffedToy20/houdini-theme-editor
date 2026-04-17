@@ -30,11 +30,18 @@ class ThemePreviewMixin:
     """Canvas preview methods kept separate from UI layout and document logic."""
 
     def redraw_previews(self) -> None:
-        self._draw_menu_preview()
-        self._draw_parameter_preview()
-        self._draw_slider_preview()
-        self._draw_channel_preview()
-        self._draw_graph_preview()
+        if "menus" in self.preview_canvases:
+            self._draw_menu_preview()
+        if "parameter" in self.preview_canvases:
+            self._draw_parameter_preview()
+        if "slider" in self.preview_canvases:
+            self._draw_slider_preview()
+        if "channel" in self.preview_canvases:
+            self._draw_channel_preview()
+        if "graph" in self.preview_canvases:
+            self._draw_graph_preview()
+        if "viewport" in self.preview_canvases:
+            self._draw_viewport_preview()
 
     def _draw_menu_preview(self) -> None:
         canvas = self.preview_canvases["menus"]
@@ -465,4 +472,66 @@ class ThemePreviewMixin:
             text="Graph preview shows normal wire color, selected / adjacent wire color, and selected node outline together.",
             fill=rgb_to_hex(param_text),
             font=("Segoe UI", 9),
+        )
+
+    def _draw_viewport_preview(self) -> None:
+        canvas = self.preview_canvases["viewport"]
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 780)
+        height = max(canvas.winfo_height(), 520)
+
+        bg_top = self.get_binding_color("BackgroundTopColor", (0.36, 0.44, 0.49))
+        bg_bottom = self.get_binding_color("BackgroundBottomColor", (0.80, 0.83, 0.84))
+        grid = self.get_binding_color("GridColor", (0.40, 0.45, 0.50))
+        grid_x = self.get_binding_color("GridXRulerColor", (0.70, 0.50, 0.50))
+        grid_y = self.get_binding_color("GridYRulerColor", (0.50, 0.70, 0.50))
+        grid_z = self.get_binding_color("GridZRulerColor", (0.50, 0.50, 0.70))
+        text = self.get_binding_color("TextColor", (0.60, 0.60, 0.60))
+        selected = self.get_binding_color("SelectedLabelColor", (0.80, 0.80, 0.00))
+
+        # Gradient background.
+        for row in range(height):
+            t = row / max(height - 1, 1)
+            mix = tuple(bg_top[i] * (1.0 - t) + bg_bottom[i] * t for i in range(3))
+            canvas.create_line(0, row, width, row, fill=rgb_to_hex(mix))
+
+        canvas.create_text(18, 18, anchor="nw", text="View", fill="#F4F4F4", font=("Segoe UI", 11, "bold"))
+
+        horizon = height * 0.40
+        vanishing_x = width * 0.52
+
+        # Perspective grid.
+        for step in range(-18, 19):
+            t = (step + 18) / 36.0
+            base_x = t * width
+            canvas.create_line(base_x, height, vanishing_x, horizon, fill=rgb_to_hex(grid), width=1)
+
+        for band in range(1, 18):
+            t = band / 18.0
+            y = horizon + ((height - horizon) * (t ** 1.35))
+            x_pad = (width * 0.52) * (1.0 - t ** 1.15)
+            canvas.create_line(x_pad, y, width - x_pad, y, fill=rgb_to_hex(grid), width=1)
+
+        # Axis / ruler hints.
+        labels = [
+            ((width * 0.52), height * 0.50, "0", grid_x),
+            ((width * 0.55), height * 0.52, "0", grid_z),
+            ((width * 0.66), height * 0.68, "1", grid_x),
+            ((width * 0.24), height * 0.72, "1", grid_z),
+            ((width * 0.82), height * 0.90, "2", grid_x),
+            ((width * 0.05), height * 0.88, "2", grid_z),
+        ]
+        for x, y, value, color in labels:
+            canvas.create_text(x, y, text=value, fill=rgb_to_hex(color), font=("Segoe UI", 12, "bold"), angle=27)
+
+        canvas.create_text(width - 155, 20, text="Persp", fill="#F4F4F4", font=("Segoe UI", 10))
+        canvas.create_text(width - 82, 20, text="No cam", fill="#F4F4F4", font=("Segoe UI", 10))
+        canvas.create_text(width - 22, height - 18, text="Education Edition", fill=rgb_to_hex(selected), font=("Segoe UI", 9), anchor="se")
+        canvas.create_text(
+            18,
+            height - 18,
+            text="Scene View preview uses 3DSceneColors-style keys, separate from .hcs UI themes.",
+            fill=rgb_to_hex(text),
+            font=("Segoe UI", 9),
+            anchor="sw",
         )

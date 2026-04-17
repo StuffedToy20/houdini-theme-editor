@@ -6,13 +6,15 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox
 
-from .bindings import BINDINGS, KEY_TO_PRIMARY, SECTION_ORDER, Binding
+from .bindings import BINDINGS, KEY_TO_PRIMARY, Binding, section_order_for_target
 from .core import (
+    DEFAULT_NEW_SCENE_COLORS_NAME,
     DEFAULT_NEW_THEME_NAME,
     HCSDocument,
     build_channel_family_palette,
     find_houdini_config_dirs,
     hex_to_rgb,
+    infer_document_kind,
     rgb_to_hex,
 )
 from .previews import ThemePreviewMixin
@@ -52,7 +54,7 @@ class ScrollableFrame(tk.Frame):
 class HCSThemeEditorApp(ThemePreviewMixin):
     def __init__(self, root: tk.Tk, initial_path: Path | None) -> None:
         self.root = root
-        self.root.title("Houdini HCS Theme Editor")
+        self.root.title("Houdini Theme Editor")
         self.root.geometry("1460x980")
         self.root.minsize(1180, 760)
 
@@ -65,20 +67,28 @@ class HCSThemeEditorApp(ThemePreviewMixin):
 
         self.root.configure(bg=self.bg)
 
-        self.document: HCSDocument | None = None
-        self.current_colors: dict[str, tuple[float, float, float]] = {}
+        self.documents: dict[str, HCSDocument | None] = {"hcs": None, "scene": None}
+        self.document_is_generated: dict[str, bool] = {"hcs": False, "scene": False}
+        self.current_colors_by_target: dict[str, dict[str, tuple[float, float, float]]] = {"hcs": {}, "scene": {}}
+        self.active_target = "hcs"
+
         self.entry_vars: dict[str, tk.StringVar] = {}
         self.entry_widgets: dict[str, tk.Entry] = {}
         self.swatches: dict[str, tk.Label] = {}
         self.status_var = tk.StringVar(value="Ready.")
         self.path_var = tk.StringVar()
+        self.path_label_var = tk.StringVar(value="Theme File")
         self.config_path_var = tk.StringVar()
+        self.preview_description_var = tk.StringVar()
+        self.controls_intro_var = tk.StringVar()
         self.family_seed_var = tk.StringVar(value="#34D399")
         self.preview_canvases: dict[str, tk.Canvas] = {}
         self.detected_config_dirs: list[Path] = []
         self.family_seed_entry: tk.Entry | None = None
         self.family_seed_swatch: tk.Label | None = None
-        self.document_is_generated = False
+        self.section_container: tk.Frame | None = None
+        self.preview_container: tk.Frame | None = None
+        self.mode_buttons: dict[str, tk.Button] = {}
 
         self._build_ui()
         self.detect_houdini_config_dirs(initial_hint=initial_path)
@@ -86,12 +96,17 @@ class HCSThemeEditorApp(ThemePreviewMixin):
             self.load_document(initial_path)
         else:
             self.create_new_overlay_document(update_status=False)
+        self._rebuild_editor_for_target(update_status=False)
 
     def _build_ui(self) -> None:
         toolbar = tk.Frame(self.root, bg=self.panel, padx=12, pady=10)
         toolbar.pack(fill="x")
 
-        tk.Label(toolbar, text="Theme File", bg=self.panel, fg=self.text, font=("Segoe UI", 10, "bold")).pack(side="left")
+        tk.Label(toolbar, text="Mode", bg=self.panel, fg=self.text, font=("Segoe UI", 10, "bold")).pack(side="left")
+        self.mode_buttons["hcs"] = self._make_mode_button(toolbar, "UI Theme (.hcs)", "hcs")
+        self.mode_buttons["scene"] = self._make_mode_button(toolbar, "Viewport Grid (3DSceneColors)", "scene")
+
+        tk.Label(toolbar, textvariable=self.path_label_var, bg=self.panel, fg=self.text, font=("Segoe UI", 10, "bold")).pack(side="left", padx=(14, 0))
 
         path_entry = tk.Entry(
             toolbar,
@@ -100,12 +115,12 @@ class HCSThemeEditorApp(ThemePreviewMixin):
             fg=self.text,
             insertbackground=self.text,
             relief="flat",
-            width=70,
+            width=58,
             font=("Consolas", 10),
         )
         path_entry.pack(side="left", fill="x", expand=True, padx=(10, 8))
 
-        self._make_toolbar_button(toolbar, "New Overlay", self.create_new_overlay_document)
+        self._make_toolbar_button(toolbar, "New", self.create_new_document_for_active_target)
         self._make_toolbar_button(toolbar, "Browse", self.browse_file)
         self._make_toolbar_button(toolbar, "Load", self.reload_file)
         self._make_toolbar_button(toolbar, "Save", self.save_file)
@@ -144,7 +159,7 @@ class HCSThemeEditorApp(ThemePreviewMixin):
 
         tk.Label(
             self.controls.inner,
-            text="Edit colors as hex. Pick a swatch to choose visually. Save writes the active values back into the .hcs file.",
+            textvariable=self.controls_intro_var,
             bg=self.panel,
             fg=self.subtle,
             justify="left",
@@ -154,15 +169,15 @@ class HCSThemeEditorApp(ThemePreviewMixin):
             pady=14,
         ).pack(fill="x")
 
-        for section in SECTION_ORDER:
-            self._build_section(section)
+        self.section_container = tk.Frame(self.controls.inner, bg=self.panel)
+        self.section_container.pack(fill="x")
 
         preview_header = tk.Frame(preview_shell, bg=self.panel, padx=14, pady=12)
         preview_header.pack(fill="x")
         tk.Label(preview_header, text="Preview", bg=self.panel, fg=self.text, font=("Segoe UI", 12, "bold")).pack(anchor="w")
         tk.Label(
             preview_header,
-            text="These are simplified demos of the parameter editor, slider strip, channel editor, and node graph.",
+            textvariable=self.preview_description_var,
             bg=self.panel,
             fg=self.subtle,
             wraplength=780,
@@ -172,11 +187,7 @@ class HCSThemeEditorApp(ThemePreviewMixin):
 
         preview_scroll = ScrollableFrame(preview_shell, self.panel)
         preview_scroll.pack(fill="both", expand=True)
-        self._add_preview_canvas(preview_scroll.inner, "menus", 780, 180, "Menus")
-        self._add_preview_canvas(preview_scroll.inner, "parameter", 780, 300, "Parameter States")
-        self._add_preview_canvas(preview_scroll.inner, "slider", 780, 180, "Slider / Keyframes")
-        self._add_preview_canvas(preview_scroll.inner, "channel", 780, 220, "Channel Editor")
-        self._add_preview_canvas(preview_scroll.inner, "graph", 780, 380, "Node Graph")
+        self.preview_container = preview_scroll.inner
 
         tk.Label(
             self.root,
@@ -188,6 +199,25 @@ class HCSThemeEditorApp(ThemePreviewMixin):
             pady=8,
             font=("Segoe UI", 9),
         ).pack(fill="x", side="bottom")
+
+    def _make_mode_button(self, master: tk.Misc, text: str, target: str) -> tk.Button:
+        button = tk.Button(
+            master,
+            text=text,
+            command=lambda value=target: self.switch_target(value),
+            bg=self.panel_alt,
+            fg=self.text,
+            activebackground=self.line,
+            activeforeground=self.text,
+            relief="flat",
+            padx=10,
+            pady=6,
+            font=("Segoe UI", 9),
+            bd=0,
+            highlightthickness=0,
+        )
+        button.pack(side="left", padx=(8, 0))
+        return button
 
     def _make_toolbar_button(self, master: tk.Misc, text: str, command) -> tk.Button:
         button = tk.Button(
@@ -208,9 +238,99 @@ class HCSThemeEditorApp(ThemePreviewMixin):
         button.pack(side="left", padx=(0, 8))
         return button
 
+    def _active_bindings(self, target: str | None = None) -> list[Binding]:
+        current_target = target or self.active_target
+        return [binding for binding in BINDINGS if binding.target == current_target]
+
+    def _active_document(self) -> HCSDocument | None:
+        return self.documents.get(self.active_target)
+
+    def _current_colors(self, target: str | None = None) -> dict[str, tuple[float, float, float]]:
+        return self.current_colors_by_target[target or self.active_target]
+
+    def _rebuild_editor_for_target(self, update_status: bool = True) -> None:
+        if self.section_container is None or self.preview_container is None:
+            return
+
+        self.path_label_var.set("Theme File" if self.active_target == "hcs" else "Scene Colors File")
+        if self.active_target == "hcs":
+            self.controls_intro_var.set(
+                "Edit Houdini UI theme colors as hex. Pick a swatch to choose visually. "
+                "Save writes the active values back into a .hcs file."
+            )
+            self.preview_description_var.set(
+                "These are simplified demos of the parameter editor, slider strip, channel editor, and node graph."
+            )
+        else:
+            self.controls_intro_var.set(
+                "Edit Scene View and viewport grid colors from Houdini's 3DSceneColors config. "
+                "Save writes a standalone 3DSceneColors-style file."
+            )
+            self.preview_description_var.set(
+                "This preview approximates Houdini's Scene View gradient background, rulers, and grid lines."
+            )
+
+        for target, button in self.mode_buttons.items():
+            button.configure(bg=self.line if target == self.active_target else self.panel_alt)
+
+        self._rebuild_sections()
+        self._rebuild_previews()
+        self._refresh_ui_from_current_target()
+        self.redraw_previews()
+
+        if update_status:
+            mode_name = "UI Theme (.hcs)" if self.active_target == "hcs" else "Viewport Grid (3DSceneColors)"
+            self.status_var.set(f"Switched to {mode_name} mode.")
+
+    def _rebuild_sections(self) -> None:
+        assert self.section_container is not None
+        for child in self.section_container.winfo_children():
+            child.destroy()
+
+        self.entry_vars.clear()
+        self.entry_widgets.clear()
+        self.swatches.clear()
+        self.family_seed_entry = None
+        self.family_seed_swatch = None
+
+        for section in section_order_for_target(self.active_target):
+            self._build_section(section)
+
+    def _rebuild_previews(self) -> None:
+        assert self.preview_container is not None
+        for child in self.preview_container.winfo_children():
+            child.destroy()
+        self.preview_canvases.clear()
+
+        if self.active_target == "hcs":
+            self._add_preview_canvas(self.preview_container, "menus", 780, 180, "Menus")
+            self._add_preview_canvas(self.preview_container, "parameter", 780, 300, "Parameter States")
+            self._add_preview_canvas(self.preview_container, "slider", 780, 180, "Slider / Keyframes")
+            self._add_preview_canvas(self.preview_container, "channel", 780, 220, "Channel Editor")
+            self._add_preview_canvas(self.preview_container, "graph", 780, 380, "Node Graph")
+        else:
+            self._add_preview_canvas(self.preview_container, "viewport", 780, 520, "Scene View / Grid")
+
+    def _refresh_ui_from_current_target(self) -> None:
+        document = self._active_document()
+        self.path_var.set(str(document.path) if document is not None else "")
+
+        current_colors = self._current_colors()
+        if not current_colors:
+            self._populate_current_colors(self.active_target)
+            current_colors = self._current_colors()
+
+        for binding in self._active_bindings():
+            color = current_colors.get(binding.primary_key, binding.fallback)
+            self._set_binding_ui(binding.primary_key, color)
+
+        if self.active_target == "hcs":
+            self.seed_family_from_current(update_status=False)
+
     def _build_section(self, section: str) -> None:
+        assert self.section_container is not None
         frame = tk.LabelFrame(
-            self.controls.inner,
+            self.section_container,
             text=section,
             bg=self.panel_alt,
             fg=self.text,
@@ -223,9 +343,9 @@ class HCSThemeEditorApp(ThemePreviewMixin):
             highlightcolor=self.line,
         )
         frame.pack(fill="x", padx=12, pady=(0, 12))
-        if section == "Channel Families":
+        if self.active_target == "hcs" and section == "Channel Families":
             self._build_family_palette_generator(frame)
-        for binding in (item for item in BINDINGS if item.section == section):
+        for binding in (item for item in self._active_bindings() if item.section == section):
             self._build_binding_row(frame, binding)
 
     def _build_family_palette_generator(self, master: tk.Misc) -> None:
@@ -390,50 +510,88 @@ class HCSThemeEditorApp(ThemePreviewMixin):
         canvas.bind("<Configure>", lambda event: self.redraw_previews())
         self.preview_canvases[key] = canvas
 
+    def switch_target(self, target: str) -> None:
+        if target == self.active_target:
+            return
+        self.active_target = target
+        if self.documents[target] is None:
+            if target == "hcs":
+                self.create_new_overlay_document(update_status=False)
+            else:
+                self.create_new_scene_document(update_status=False)
+        self._rebuild_editor_for_target()
+
+    def create_new_document_for_active_target(self) -> None:
+        if self.active_target == "hcs":
+            self.create_new_overlay_document()
+        else:
+            self.create_new_scene_document()
+
+    def _populate_current_colors(self, target: str) -> None:
+        colors = self.current_colors_by_target[target]
+        colors.clear()
+        document = self.documents[target]
+        for binding in self._active_bindings(target):
+            if document is not None:
+                for key in binding.keys:
+                    parsed = document.get_color(key)
+                    if parsed is not None:
+                        colors[binding.primary_key] = parsed
+                        break
+                else:
+                    colors[binding.primary_key] = binding.fallback
+            else:
+                colors[binding.primary_key] = binding.fallback
+
     def create_new_overlay_document(self, update_status: bool = True) -> None:
-        self.document = HCSDocument.new_overlay()
-        self.document_is_generated = True
-        self.path_var.set(str(self.document.path))
-        self.current_colors.clear()
-        for binding in BINDINGS:
-            color = self._resolve_binding_color(binding)
-            self.current_colors[binding.primary_key] = color
-            self._set_binding_ui(binding.primary_key, color)
-        self.seed_family_from_current(update_status=False)
-        self.redraw_previews()
+        self.documents["hcs"] = HCSDocument.new_overlay()
+        self.document_is_generated["hcs"] = True
+        self._populate_current_colors("hcs")
+        if self.active_target == "hcs":
+            self._rebuild_editor_for_target(update_status=False)
         if update_status:
-            self.status_var.set("Created a new overlay theme. Save As or Deploy to write it.")
+            self.status_var.set("Created a new .hcs overlay theme. Save As or Deploy to write it.")
+
+    def create_new_scene_document(self, update_status: bool = True) -> None:
+        self.documents["scene"] = HCSDocument.new_scene_colors()
+        self.document_is_generated["scene"] = True
+        self._populate_current_colors("scene")
+        if self.active_target == "scene":
+            self._rebuild_editor_for_target(update_status=False)
+        if update_status:
+            self.status_var.set("Created a new 3DSceneColors viewport config. Save As or Deploy to write it.")
 
     def browse_file(self) -> None:
-        selected = filedialog.askopenfilename(
-            title="Open Houdini .hcs file",
-            filetypes=[("Houdini Color Scheme", "*.hcs"), ("All files", "*.*")],
-        )
+        if self.active_target == "hcs":
+            title = "Open Houdini .hcs file"
+            filetypes = [("Houdini Color Scheme", "*.hcs"), ("All files", "*.*")]
+        else:
+            title = "Open Houdini 3DSceneColors file"
+            filetypes = [("3D Scene Colors", "3DSceneColors*"), ("All files", "*.*")]
+        selected = filedialog.askopenfilename(title=title, filetypes=filetypes)
         if selected:
             self.load_document(Path(selected))
 
     def reload_file(self) -> None:
-        if not self.path_var.get().strip():
+        current = self.path_var.get().strip()
+        if not current:
             self.browse_file()
             return
-        self.load_document(Path(self.path_var.get().strip()))
+        self.load_document(Path(current))
 
     def load_document(self, path: Path) -> None:
+        kind = infer_document_kind(path)
         try:
-            self.document = HCSDocument.load(path)
+            document = HCSDocument.load(path, kind=kind)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Load failed", f"Could not load file:\n{path}\n\n{exc}")
             return
 
-        self.document_is_generated = False
-        self.path_var.set(str(path))
-        self.current_colors.clear()
-        for binding in BINDINGS:
-            color = self._resolve_binding_color(binding)
-            self.current_colors[binding.primary_key] = color
-            self._set_binding_ui(binding.primary_key, color)
-        self.seed_family_from_current(update_status=False)
-        self.redraw_previews()
+        self.documents[kind] = document
+        self.document_is_generated[kind] = False
+        self._populate_current_colors(kind)
+        self.active_target = kind
+        self._rebuild_editor_for_target(update_status=False)
         self.status_var.set(f"Loaded {path}")
 
     def detect_houdini_config_dirs(self, initial_hint: Path | None = None) -> None:
@@ -464,15 +622,9 @@ class HCSThemeEditorApp(ThemePreviewMixin):
             self.config_path_var.set("")
             self.status_var.set("No Houdini config folder detected yet.")
 
-    def _resolve_binding_color(self, binding: Binding) -> tuple[float, float, float]:
-        if self.document is not None:
-            for key in binding.keys:
-                parsed = self.document.get_color(key)
-                if parsed is not None:
-                    return parsed
-        return binding.fallback
-
     def _set_binding_ui(self, primary_key: str, color: tuple[float, float, float]) -> None:
+        if primary_key not in self.entry_vars:
+            return
         self.entry_vars[primary_key].set(rgb_to_hex(color))
         self.swatches[primary_key].configure(bg=rgb_to_hex(color))
         self.entry_widgets[primary_key].configure(highlightthickness=0)
@@ -513,7 +665,7 @@ class HCSThemeEditorApp(ThemePreviewMixin):
         self.status_var.set(f"Family seed picked: {hex_value.upper()}")
 
     def seed_family_from_current(self, update_status: bool = True) -> None:
-        color = self.current_colors.get("ChannelColorGreen3", hex_to_rgb("#34D399"))
+        color = self._current_colors("hcs").get("ChannelColorGreen3", hex_to_rgb("#34D399"))
         self._set_family_seed_ui(color)
         if update_status:
             self.status_var.set(f"Family seed synced from Green family 3: {rgb_to_hex(color)}")
@@ -538,12 +690,15 @@ class HCSThemeEditorApp(ThemePreviewMixin):
             "ChannelColorGreen4",
             "ChannelColorGreen5",
         ]
+        colors = self._current_colors("hcs")
         for key, color in zip(keys, palette, strict=False):
             primary_key = KEY_TO_PRIMARY.get(key, key)
-            self.current_colors[primary_key] = color
-            self._set_binding_ui(primary_key, color)
+            colors[primary_key] = color
+            if self.active_target == "hcs":
+                self._set_binding_ui(primary_key, color)
 
-        self.redraw_previews()
+        if self.active_target == "hcs":
+            self.redraw_previews()
         self.status_var.set(f"Generated channel family palette from {rgb_to_hex(base_color)}")
 
     def commit_entry(self, primary_key: str) -> None:
@@ -558,73 +713,95 @@ class HCSThemeEditorApp(ThemePreviewMixin):
             self.entry_widgets[primary_key].configure(highlightbackground="#E14640", highlightcolor="#E14640", highlightthickness=1)
             self.status_var.set(f"Invalid color for {primary_key}: {self.entry_vars[primary_key].get().strip()}")
             return
-        self.current_colors[primary_key] = color
+        self._current_colors()[primary_key] = color
         self._set_binding_ui(primary_key, color)
         self.redraw_previews()
         self.status_var.set(f"Updated {primary_key} to {rgb_to_hex(color)}")
 
     def pick_color(self, binding: Binding) -> None:
-        initial = rgb_to_hex(self.current_colors.get(binding.primary_key, binding.fallback))
+        initial = rgb_to_hex(self.get_binding_color(binding.primary_key, binding.fallback))
         rgb_tuple, hex_value = colorchooser.askcolor(color=initial, title=binding.label)
         if not hex_value:
             return
         del rgb_tuple
         color = hex_to_rgb(hex_value)
-        self.current_colors[binding.primary_key] = color
+        self._current_colors()[binding.primary_key] = color
         self._set_binding_ui(binding.primary_key, color)
         self.redraw_previews()
         self.status_var.set(f"Picked {binding.label}: {hex_value.upper()}")
 
     def _apply_current_colors_to_document(self) -> bool:
-        if self.document is None:
-            self.create_new_overlay_document(update_status=False)
-            if self.document is None:
-                messagebox.showinfo("No file loaded", "Create or load a .hcs file first.")
+        document = self._active_document()
+        if document is None:
+            if self.active_target == "hcs":
+                self.create_new_overlay_document(update_status=False)
+            else:
+                self.create_new_scene_document(update_status=False)
+            document = self._active_document()
+            if document is None:
+                messagebox.showinfo("No file loaded", "Create or load a config file first.")
                 return False
-        for binding in BINDINGS:
-            color = self.current_colors.get(binding.primary_key, binding.fallback)
+
+        for binding in self._active_bindings():
+            color = self._current_colors().get(binding.primary_key, binding.fallback)
             for key in binding.keys:
-                self.document.set_color(key, color)
+                document.set_color(key, color)
         return True
 
     def save_file(self) -> None:
         if not self._apply_current_colors_to_document():
             return
-        if self.document_is_generated:
+        document = self._active_document()
+        assert document is not None
+        if self.document_is_generated[self.active_target]:
             self.save_as()
             return
         try:
-            assert self.document is not None
-            scheme_name = self.document.sync_scheme_name_to_path(self.document.path)
-            self.document.save()
+            display_name = document.sync_scheme_name_to_path(document.path)
+            document.save()
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Save failed", f"Could not save file:\n{self.document.path}\n\n{exc}")
+            messagebox.showerror("Save failed", f"Could not save file:\n{document.path}\n\n{exc}")
             return
-        self.status_var.set(f"Saved {self.document.path} with Scheme: {scheme_name}")
-        messagebox.showinfo("Saved", f"Saved theme file:\n{self.document.path}\n\nScheme: {scheme_name}")
+        label = "Scheme" if self.active_target == "hcs" else "File"
+        self.status_var.set(f"Saved {document.path}")
+        messagebox.showinfo("Saved", f"Saved config file:\n{document.path}\n\n{label}: {display_name}")
 
     def save_as(self) -> None:
         if not self._apply_current_colors_to_document():
             return
-        assert self.document is not None
+        document = self._active_document()
+        assert document is not None
+
+        if self.active_target == "hcs":
+            title = "Save Houdini .hcs file"
+            defaultextension = ".hcs"
+            filetypes = [("Houdini Color Scheme", "*.hcs"), ("All files", "*.*")]
+            initialfile = document.path.name or f"{DEFAULT_NEW_THEME_NAME}.hcs"
+        else:
+            title = "Save Houdini 3DSceneColors file"
+            defaultextension = ""
+            filetypes = [("3D Scene Colors", "3DSceneColors*"), ("All files", "*.*")]
+            initialfile = document.path.name or DEFAULT_NEW_SCENE_COLORS_NAME
+
         target = filedialog.asksaveasfilename(
-            title="Save Houdini .hcs file",
-            defaultextension=".hcs",
-            filetypes=[("Houdini Color Scheme", "*.hcs"), ("All files", "*.*")],
-            initialfile=self.document.path.name,
+            title=title,
+            defaultextension=defaultextension,
+            filetypes=filetypes,
+            initialfile=initialfile,
         )
         if not target:
             return
         try:
-            scheme_name = self.document.sync_scheme_name_to_path(target)
-            self.document.save(target)
+            display_name = document.sync_scheme_name_to_path(target)
+            document.save(target)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Save failed", f"Could not save file:\n{target}\n\n{exc}")
             return
-        self.document_is_generated = False
+        self.document_is_generated[self.active_target] = False
         self.path_var.set(str(Path(target)))
-        self.status_var.set(f"Saved as {target} with Scheme: {scheme_name}")
-        messagebox.showinfo("Saved", f"Saved theme file:\n{target}\n\nScheme: {scheme_name}")
+        label = "Scheme" if self.active_target == "hcs" else "File"
+        self.status_var.set(f"Saved as {target}")
+        messagebox.showinfo("Saved", f"Saved config file:\n{target}\n\n{label}: {display_name}")
 
     def deploy_to_detected_config(self) -> None:
         if not self._apply_current_colors_to_document():
@@ -643,37 +820,48 @@ class HCSThemeEditorApp(ThemePreviewMixin):
                 return
 
         config_dir = Path(config_text)
-        theme_name = self.document.path.name if self.document is not None else f"{DEFAULT_NEW_THEME_NAME}.hcs"
-        target = config_dir / theme_name
+        document = self._active_document()
+        assert document is not None
+
+        if self.active_target == "hcs":
+            target_name = document.path.name if document.path.name else f"{DEFAULT_NEW_THEME_NAME}.hcs"
+        else:
+            target_name = DEFAULT_NEW_SCENE_COLORS_NAME
+        target = config_dir / target_name
 
         try:
             config_dir.mkdir(parents=True, exist_ok=True)
-            assert self.document is not None
-            scheme_name = self.document.sync_scheme_name_to_path(target)
-            self.document.write_to(target)
+            display_name = document.sync_scheme_name_to_path(target)
+            document.write_to(target)
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Deploy failed", f"Could not deploy theme to:\n{target}\n\n{exc}")
+            messagebox.showerror("Deploy failed", f"Could not deploy config to:\n{target}\n\n{exc}")
             return
 
-        self.document.path = target
-        self.document_is_generated = False
+        document.path = target
+        self.document_is_generated[self.active_target] = False
         self.path_var.set(str(target))
-        self.status_var.set(f"Deployed theme to {target}")
+        self.status_var.set(f"Deployed config to {target}")
+        suffix = (
+            f"Scheme: {display_name}\n\nIn Houdini, click Reload in Color Settings or restart Houdini."
+            if self.active_target == "hcs"
+            else f"File: {display_name}\n\nIn Houdini, reopen the Scene View or restart Houdini if the grid does not refresh immediately."
+        )
         messagebox.showinfo(
-            "Theme deployed",
-            "Theme file copied to Houdini config:\n"
+            "Config deployed",
+            "Config file copied to Houdini config:\n"
             f"{target}\n\n"
-            f"Scheme: {scheme_name}\n\n"
-            "In Houdini, click Reload in Color Settings or restart Houdini.",
+            f"{suffix}",
         )
 
     def get_binding_color(self, key: str, fallback: tuple[float, float, float]) -> tuple[float, float, float]:
         primary_key = KEY_TO_PRIMARY.get(key, key)
-        return self.current_colors.get(primary_key, fallback)
+        return self._current_colors().get(primary_key, fallback)
 
 
 def guess_default_path() -> Path | None:
-    candidates = sorted(path for path in Path.cwd().glob("*.hcs") if path.is_file())
+    candidates: list[Path] = []
+    candidates.extend(sorted(path for path in Path.cwd().glob("*.hcs") if path.is_file()))
+    candidates.extend(sorted(path for path in Path.cwd().glob("3DSceneColors*") if path.is_file()))
     if len(candidates) == 1:
         return candidates[0]
     return None
