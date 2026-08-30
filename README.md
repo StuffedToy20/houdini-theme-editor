@@ -6,6 +6,14 @@ Houdini is a trademark of SideFX. This project is independent and is not affilia
 
 ![Houdini Theme Editor screenshot](assets/editor-screenshot.png)
 
+## Project Status
+
+Houdini now provides improved built-in theme customization features. Because of this, this project is considered complete and is no longer actively maintained. The existing source code remains available for reference and personal use, but no further feature updates are planned.
+
+## 项目状态
+
+由于 Houdini 已经更新并提供了更完善的内置主题修改功能，本项目现已视为完成，之后不再进行积极维护。现有源代码仍会保留，供参考和个人使用，但暂时不会再安排新的功能更新。
+
 AI-assisted project. The code and project structure were reviewed, edited, and curated by the author.
 
 本项目在开发过程中使用了 AI 辅助，代码与项目结构已由作者审阅、整理和确认。
